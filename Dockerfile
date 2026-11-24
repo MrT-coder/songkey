@@ -1,36 +1,51 @@
-# Runtime-only image: the Go binary is cross-compiled on a development machine
-# and copied in, so the server never downloads a toolchain or runs a compile.
+# Self-contained, multi-architecture build. This is the image published to
+# ghcr.io/mrt-coder/songkey for every release.
 #
-# Build the binary first (see build.sh / build.ps1), then:
-#   docker compose -f songkey.yml up -d --build
-#
+# Nothing is compiled on the server that runs it: the release workflow builds
+# this image once per architecture and publishes it. To build it yourself:
+#   docker build -t songkey .
+
+# The compiler runs on the build machine's own architecture and cross-compiles,
+# which is much faster than emulating the target.
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY internal ./internal
+
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/songkey ./cmd/server
+
 # Debian rather than Alpine because the standalone yt-dlp build is linked
 # against glibc and will not run on musl.
 FROM debian:bookworm-slim
 
-# yt-dlp ships as a self-contained binary, so the image needs no Python runtime
-# of its own. It is only executed on demand and never stays resident.
-#
-# The version is deliberately "latest": YouTube changes break older builds
-# within weeks, so pinning turns into a broken service. Rebuild the image to
-# pick up a newer one. The service also falls back to YouTube's oEmbed API when
-# the extractor fails, so a stale binary degrades instead of blocking.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && curl -fsSL -o /usr/local/bin/yt-dlp \
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" \
-    && chmod +x /usr/local/bin/yt-dlp \
-    && apt-get purge -y curl \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+ARG TARGETARCH
 
-COPY bin/songkey /usr/local/bin/songkey
-RUN chmod +x /usr/local/bin/songkey
+# yt-dlp is deliberately "latest" at build time: YouTube changes break older
+# builds within weeks. A newer release picks up a newer yt-dlp.
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) asset=yt-dlp_linux ;; \
+        arm64) asset=yt-dlp_linux_aarch64 ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    curl -fsSL -o /usr/local/bin/yt-dlp \
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$asset"; \
+    chmod +x /usr/local/bin/yt-dlp; \
+    apt-get purge -y curl; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
-# The catalog lives here and must be mounted, otherwise the duplicate index is
-# lost every time the container is recreated.
+COPY --from=build /out/songkey /usr/local/bin/songkey
+
 VOLUME ["/data"]
-
 EXPOSE 8090
-
 ENTRYPOINT ["/usr/local/bin/songkey"]

@@ -1,13 +1,21 @@
-# Deployed the same way OMV manages metube and navidrome:
-#   /srv/dev-disk-by-uuid-<uuid>/appdata/songkey/songkey.yml
+# Runs the published release image. Nothing is built on the server.
+#
+# On OpenMediaVault, keep it next to the .env, in a folder with the same name:
+#   <appdata>/songkey/songkey.yml
+#   <appdata>/songkey/.env
+#
+# Updating: Services -> Compose -> Files -> select songkey -> Pull, then Up.
+# From a shell, the same is:
+#   docker compose -f songkey.yml pull && docker compose -f songkey.yml up -d
 #
 # The service only speaks HTTP to MeTube and Navidrome, so it never mounts the
 # music library and cannot touch the files.
 
 services:
   songkey:
-    build: .
-    image: songkey:latest
+    # "0.1" follows every 0.1.x fix but never jumps to 0.2, which may change
+    # configuration or replies. Move it by hand after reading the release notes.
+    image: ghcr.io/mrt-coder/songkey:0.1
     container_name: songkey
     restart: unless-stopped
 
@@ -16,14 +24,8 @@ services:
 
     volumes:
       # The catalog must survive container recreation, otherwise the duplicate
-      # index is rebuilt from scratch on every deploy.
+      # index is rebuilt from scratch on every update.
       - ./data:/data
-
-      # The binary is mounted rather than baked into the image, so updating it
-      # is a copy plus a restart. Baked in, every update needs a full image
-      # rebuild — slow here, and easy to skip by accident, which then looks
-      # like the new code did not work.
-      - ./bin/songkey:/usr/local/bin/songkey:ro
 
     # MeTube and Navidrome publish on the host, so reaching them through the
     # host gateway avoids joining — and risking — their existing networks.
