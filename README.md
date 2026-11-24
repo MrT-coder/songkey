@@ -12,6 +12,37 @@ playlist.
 It is written in Go, has no external dependencies, and idles at roughly 20 MB
 of RAM, so it runs happily on old hardware.
 
+## The idea
+
+I listen to music from my own server, and I add songs to it from my phone: I
+find something on YouTube, tap *Share*, and a shortcut sends the link to my
+home server. The problem was that after a few hundred songs I no longer knew
+what I already had, so the library filled up with duplicates — the same song
+from the official video, the lyric video and the topic channel.
+
+songkey is the piece in the middle that remembers. A day of use looks like
+this:
+
+1. Share a YouTube link (or a whole playlist) to a phone shortcut.
+2. songkey answers in about a second: *queued*, *already have it*, or *already
+   on its way*.
+3. Only new songs are downloaded. When each one lands in the library, it is
+   added to a playlist and a notification arrives on the phone.
+
+The same endpoints answer in JSON (`format=json`), so a player or a dashboard
+can submit links and follow their progress too.
+
+## Project status
+
+This is a **personal project** that I use every day on my own home server. I am
+publishing it because it may be useful to someone running a similar setup
+(MeTube + Navidrome on modest hardware), and as part of my portfolio.
+
+- It is **under active development**. Until version 1.0, configuration and
+  replies may change between releases; the changes are listed in each release.
+- It is tested against my own setup first. Issues and pull requests are
+  welcome, but support is best effort.
+
 ## Where it fits
 
 songkey is a gate, not a downloader and not a player. It talks to two things you
@@ -66,8 +97,8 @@ titles and the reason, and `&force=1` overrides it.
 
 ## Roadmap
 
-- **Stable, versioned HTTP API** (`/v1/...`) with job ids, so a small front-end
-  can submit a link and poll the result.
+- **Stable, versioned HTTP API** (`/v1/...`). JSON replies and job ids already
+  exist (`format=json`); the next step is freezing them under a version.
 - **Acoustic fingerprinting** (Chromaprint) as a fourth layer, computed *after*
   download. A fingerprint needs the audio, so it cannot replace the
   pre-download layers; it catches what slipped through.
