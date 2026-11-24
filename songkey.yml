@@ -1,0 +1,43 @@
+# Deployed the same way OMV manages metube and navidrome:
+#   /srv/dev-disk-by-uuid-<uuid>/appdata/songkey/songkey.yml
+#
+# The service only speaks HTTP to MeTube and Navidrome, so it never mounts the
+# music library and cannot touch the files.
+
+services:
+  songkey:
+    build: .
+    image: songkey:latest
+    container_name: songkey
+    restart: unless-stopped
+
+    ports:
+      - "8090:8090"
+
+    volumes:
+      # The catalog must survive container recreation, otherwise the duplicate
+      # index is rebuilt from scratch on every deploy.
+      - ./data:/data
+
+      # The binary is mounted rather than baked into the image, so updating it
+      # is a copy plus a restart. Baked in, every update needs a full image
+      # rebuild — slow here, and easy to skip by accident, which then looks
+      # like the new code did not work.
+      - ./bin/songkey:/usr/local/bin/songkey:ro
+
+    # MeTube and Navidrome publish on the host, so reaching them through the
+    # host gateway avoids joining — and risking — their existing networks.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    env_file:
+      - .env
+
+    # A hard ceiling on a machine with under 2 GB of RAM: if anything runs
+    # away, the container dies instead of the server.
+    #
+    # This must cover the service AND the yt-dlp process it spawns. The Go
+    # binary sits around 20 MB, but the standalone yt-dlp build unpacks itself
+    # into memory and peaks well above 100 MB — at 128m the kernel was killing
+    # it mid-probe.
+    mem_limit: 256m

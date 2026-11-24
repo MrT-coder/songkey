@@ -1,0 +1,23 @@
+# Secrets and local configuration
+.env
+*.env
+!env.example
+
+# Build output
+bin/
+
+# Runtime state (dedup catalog, logs)
+*.json.bak
+catalog.json
+data/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS / tooling
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
