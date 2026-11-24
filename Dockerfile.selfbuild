@@ -1,30 +1,48 @@
-# Self-contained build, for a machine that can afford to compile.
+# Self-contained, multi-architecture build. This is the image published to
+# ghcr.io/mrt-coder/songkey for every release.
 #
 # The default Dockerfile expects a pre-built binary instead, which is the right
-# choice for the target server. Use this one only when building elsewhere:
+# choice for a server too slow to compile. Use this one when building elsewhere:
 #   docker build -f Dockerfile.selfbuild -t songkey:latest .
 
-FROM golang:1.22-alpine AS build
+# The compiler runs on the build machine's own architecture and cross-compiles,
+# which is much faster than emulating the target.
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
 
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/songkey ./cmd/server
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/songkey ./cmd/server
 
+# Debian rather than Alpine because the standalone yt-dlp build is linked
+# against glibc and will not run on musl.
 FROM debian:bookworm-slim
 
-ARG YTDLP_VERSION=2025.01.26
+ARG TARGETARCH
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && curl -fsSL -o /usr/local/bin/yt-dlp \
-        "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
-    && chmod +x /usr/local/bin/yt-dlp \
-    && apt-get purge -y curl \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+# yt-dlp is deliberately "latest" at build time: YouTube changes break older
+# builds within weeks. A newer release picks up a newer yt-dlp.
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) asset=yt-dlp_linux ;; \
+        arm64) asset=yt-dlp_linux_aarch64 ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    curl -fsSL -o /usr/local/bin/yt-dlp \
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$asset"; \
+    chmod +x /usr/local/bin/yt-dlp; \
+    apt-get purge -y curl; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/songkey /usr/local/bin/songkey
 

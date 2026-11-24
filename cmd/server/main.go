@@ -154,8 +154,12 @@ type server struct {
 	filedSinceIdle int
 }
 
+// version is set at build time with -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime)
+	log.Printf("songkey %s", version)
 
 	cfg, err := loadConfig()
 	if err != nil {

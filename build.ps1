@@ -16,7 +16,9 @@ if ($LASTEXITCODE -ne 0) { throw 'tests failed' }
 
 Write-Host 'Building linux/amd64 binary...' -ForegroundColor Cyan
 $env:GOOS = 'linux'; $env:GOARCH = 'amd64'
-go build -ldflags='-s -w' -o bin/songkey ./cmd/server
+$version = (git describe --tags --always --dirty 2>$null)
+if (-not $version) { $version = 'dev' }
+go build -ldflags="-s -w -X main.version=$version" -o bin/songkey ./cmd/server
 if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 
 $size = [math]::Round((Get-Item bin/songkey).Length / 1MB, 1)

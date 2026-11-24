@@ -129,9 +129,50 @@ Requirements: Docker, a running MeTube and a running Navidrome, and a Navidrome
 user. The Navidrome music folder and MeTube's download folder must be the same
 directory, so finished downloads show up in the library.
 
+### With the published image
+
+Every release publishes `ghcr.io/mrt-coder/songkey` for `linux/amd64` and
+`linux/arm64` (a Raspberry Pi works). Tags: `latest`, `0.1` and `0.1.0`.
+
+```yaml
+services:
+  songkey:
+    image: ghcr.io/mrt-coder/songkey:0.1
+    container_name: songkey
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./data:/data          # the duplicate index; keep it
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    mem_limit: 256m
+```
+
 ```bash
 cp env.example .env
 nano .env          # Navidrome URL/user/password, MeTube URL, API_TOKEN
+docker compose up -d
+docker compose logs -f   # the first line names the running version
+```
+
+Pin `0.1` rather than `latest` while the project is below 1.0: a minor version
+may change configuration or replies, and the release notes say how.
+
+### On a server too slow to build images
+
+`songkey.yml` takes a different route, made for the 2007 machine songkey was
+born on: the image only holds yt-dlp, and the songkey binary is mounted from
+`./bin`, so an update is a file copy instead of an image rebuild. Get the
+binary from the [releases page](https://github.com/MrT-coder/songkey/releases)
+(`songkey-linux-amd64` or `songkey-linux-arm64`, renamed to `bin/songkey`) or
+build it yourself (below), then:
+
+```bash
+cp env.example .env
+nano .env
 docker compose -f songkey.yml up -d
 docker compose -f songkey.yml logs -f
 ```
@@ -154,8 +195,8 @@ your own machine:
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/songkey ./cmd/server
 ```
 
-`Dockerfile.selfbuild` is a multi-stage alternative if you would rather build on
-the target.
+`Dockerfile.selfbuild` is the multi-stage, multi-architecture build behind the
+published image.
 
 ### Updating
 
