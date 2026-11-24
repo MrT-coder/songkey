@@ -365,7 +365,8 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request, p map[string]
 	client := clientIP(r)
 	if wait, blocked := s.guard.Blocked(client); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-		reply(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		replyError(w, wantsJSON(p), http.StatusTooManyRequests, "too_many_attempts",
+			"too many failed attempts, try again later")
 		return false
 	}
 
@@ -382,7 +383,7 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request, p map[string]
 	if s.guard.Fail(client) {
 		log.Printf("locking out %s after repeated wrong tokens", client)
 	}
-	reply(w, http.StatusUnauthorized, "unauthorized")
+	replyError(w, wantsJSON(p), http.StatusUnauthorized, "unauthorized", "unauthorized")
 	return false
 }
 
@@ -412,18 +413,19 @@ func keysOf(p map[string]string) []string {
 
 // handleAdd is the endpoint the phone shortcut calls. It accepts the URL as a
 // query parameter or a form field, and answers in plain text so the shortcut
-// can show the result directly.
+// can show the result directly, or in JSON with format=json (see respond.go).
 func (s *server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	p := readParams(r)
 	if !s.authorize(w, r, p) {
 		return
 	}
+	asJSON := wantsJSON(p)
 
 	// Some shortcut apps send the link JSON-escaped, so the slashes arrive as
 	// "\/". Undoing that keeps the logs readable and the matching predictable.
 	rawURL := strings.ReplaceAll(strings.TrimSpace(p["url"]), `\/`, "/")
 	if rawURL == "" {
-		reply(w, http.StatusBadRequest, "missing url parameter")
+		replyError(w, asJSON, http.StatusBadRequest, "missing_url", "missing url parameter")
 		return
 	}
 
@@ -435,24 +437,29 @@ func (s *server) handleAdd(w http.ResponseWriter, r *http.Request) {
 	// playlist. One shared while a playlist is merely open names both, and is
 	// handled below as the single song it is.
 	if _, isPlaylist := youtube.ExtractPlaylistID(rawURL); isPlaylist {
-		s.addPlaylist(w, rawURL, force)
+		s.addPlaylist(w, asJSON, rawURL, force)
 		return
 	}
 
 	videoID, ok := youtube.ExtractID(rawURL)
 	if !ok {
 		if strings.Contains(rawURL, "/@") {
-			reply(w, http.StatusBadRequest,
+			replyError(w, asJSON, http.StatusBadRequest, "channel_not_supported",
 				"CHANNELS ARE NOT SUPPORTED\nSend a song or a playlist link.")
 			return
 		}
-		reply(w, http.StatusBadRequest, "could not read a YouTube video id from that link")
+		replyError(w, asJSON, http.StatusBadRequest, "invalid_url",
+			"could not read a YouTube video id from that link")
 		return
 	}
 	if existing, found := s.cat.FindByVideo(videoID); found && !force {
-		reply(w, http.StatusConflict,
+		replyAdd(w, asJSON, http.StatusConflict,
 			fmt.Sprintf("ALREADY HAVE IT\n%s - %s\n\nAdd &force=1 to download anyway.",
-				existing.Artist, existing.Title))
+				existing.Artist, existing.Title),
+			addResult{Result: "already_have", Track: &trackView{
+				VideoID: existing.VideoID, Title: existing.Title,
+				Artist: existing.Artist, Duration: existing.Duration,
+			}})
 		return
 	}
 
@@ -464,8 +471,11 @@ func (s *server) handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	// A request for something already in flight is answered with that job.
 	if active, ok := s.cat.Active(videoID); ok && !force {
-		reply(w, http.StatusOK, fmt.Sprintf("ALREADY QUEUED\nJob %s is %s.\nCheck /status?job=%s",
-			active.ID, active.State, active.ID))
+		v := viewJob(active)
+		replyAdd(w, asJSON, http.StatusOK,
+			fmt.Sprintf("ALREADY QUEUED\nJob %s is %s.\nCheck /status?job=%s",
+				active.ID, active.State, active.ID),
+			addResult{Result: "already_queued", Job: &v, Notify: s.notifier.Enabled()})
 		return
 	}
 
@@ -495,17 +505,7 @@ func (s *server) handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	go s.processAdd(job)
 
-	msg := "QUEUED\n"
-	if err == nil {
-		msg += name + "\n"
-	}
-	msg += fmt.Sprintf("Job %s\n\n", job.ID)
-	if s.notifier.Enabled() {
-		msg += "You will get a notification with the result."
-	} else {
-		msg += "Check /status?job=" + job.ID + " for the result."
-	}
-	reply(w, http.StatusAccepted, msg)
+	replyQueued(w, asJSON, job, name, err == nil, s.notifier.Enabled())
 }
 
 // processAdd carries a received job through metadata, duplicate check and
@@ -612,12 +612,15 @@ func (s *server) resumeReceived() {
 // Listing a playlist takes around a minute on modest hardware — longer than a
 // phone shortcut will wait — so the reply goes out at once and the result
 // arrives as a notification instead.
-func (s *server) addPlaylist(w http.ResponseWriter, rawURL string, force bool) {
+func (s *server) addPlaylist(w http.ResponseWriter, asJSON bool, rawURL string, force bool) {
 	msg := "PLAYLIST RECEIVED\n"
+	var pl playlistView
 	if id, ok := youtube.ExtractPlaylistID(rawURL); ok {
+		pl.ID = id
 		// Same quick, bounded lookup as for a single song, so the reply names it.
 		if name, err := s.probe.Preview(context.Background(), "https://www.youtube.com/playlist?list="+id); err == nil {
 			msg += name + "\n"
+			pl.Name = name
 		} else {
 			log.Printf("preview of playlist %s failed (the reply will not name it): %v", id, err)
 		}
@@ -628,7 +631,8 @@ func (s *server) addPlaylist(w http.ResponseWriter, rawURL string, force bool) {
 	} else {
 		msg += "\n\nCheck /status or the logs to see the result."
 	}
-	reply(w, http.StatusAccepted, msg)
+	replyAdd(w, asJSON, http.StatusAccepted, msg,
+		addResult{Result: "playlist_received", Playlist: &pl, Notify: s.notifier.Enabled()})
 
 	go s.processPlaylist(rawURL, force)
 }
@@ -754,21 +758,37 @@ func (s *server) handleReindex(w http.ResponseWriter, r *http.Request) {
 // its state, and the most recent finished ones with the reason they ended.
 //
 // With ?job=<id> (a job id or a YouTube video id) it describes just that one.
+// With format=json it answers the same as data (see respond.go).
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	p := readParams(r)
 	if !s.authorize(w, r, p) {
 		return
 	}
+	asJSON := wantsJSON(p)
 
 	if ref := strings.TrimSpace(p["job"]); ref != "" {
 		job, ok := s.cat.FindJob(ref)
 		if !ok {
-			reply(w, http.StatusNotFound, "no job with that id")
+			replyError(w, asJSON, http.StatusNotFound, "job_not_found", "no job with that id")
+			return
+		}
+		if asJSON {
+			writeJSON(w, http.StatusOK, map[string]jobView{"job": viewJob(job)})
 			return
 		}
 		var b strings.Builder
 		writeJob(&b, job, true)
 		reply(w, http.StatusOK, b.String())
+		return
+	}
+
+	if asJSON {
+		writeJSON(w, http.StatusOK, statusResult{
+			Playlist: playlistView{ID: s.playlistID, Name: s.cfg.playlistName},
+			Indexed:  s.cat.Size(),
+			Active:   viewJobs(s.cat.Pending()),
+			Recent:   viewJobs(s.cat.History(20)),
+		})
 		return
 	}
 

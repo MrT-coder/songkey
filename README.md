@@ -249,6 +249,67 @@ a public hostname (a Cloudflare Tunnel, for instance):
 | `GET /status?job=<id>` | everything known about one job (by job id or YouTube video id) |
 | `GET /health` | liveness |
 
+### JSON replies
+
+`/add` and `/status` answer in plain text by default. Add `format=json` (query
+parameter, form field or JSON body field) to get the same outcome as data, for
+a player, a dashboard or a script. The HTTP status is the same in both shapes.
+
+`/add` returns a `result` plus the details that go with it:
+
+| `result` | Status | Also carries |
+|---|---|---|
+| `queued` | 202 | `job` |
+| `already_queued` | 200 | `job` (the one already in flight) |
+| `already_have` | 409 | `track` (the song in your library) |
+| `playlist_received` | 202 | `playlist` (`id`, `name`) |
+
+```json
+{
+  "result": "queued",
+  "message": "QUEUED\nBad Bunny - Tití Me Preguntó\nJob 3fa91c\n\n...",
+  "job": {
+    "id": "3fa91c", "state": "received", "video_id": "Cr8K88UcO5s",
+    "url": "https://www.youtube.com/watch?v=Cr8K88UcO5s",
+    "title": "Tití Me Preguntó", "artist": "", "duration": 0,
+    "force": false, "attempts": 0,
+    "created": "2026-11-24T10:00:00Z", "updated": "2026-11-24T10:00:00Z"
+  },
+  "notify": true
+}
+```
+
+`message` is the text reply, ready to show to a person. `notify` says whether
+the outcome will also arrive as a notification; otherwise poll
+`/status?job=<id>&format=json`, which returns `{"job": {...}}`.
+
+A job's `state` is one of `received`, `queued`, `downloaded`, `filed`,
+`failed` or `duplicate`; `reason` explains the last two.
+
+`/status?format=json` returns:
+
+```json
+{
+  "playlist": { "id": "…", "name": "songkey" },
+  "indexed": 1212,
+  "active": [ { "id": "3fa91c", "state": "queued", "...": "..." } ],
+  "recent": [ { "id": "9b02de", "state": "failed", "reason": "…" } ]
+}
+```
+
+Errors carry a stable `code` and a human `message`:
+
+```json
+{ "error": { "code": "invalid_url", "message": "could not read a YouTube video id from that link" } }
+```
+
+| `code` | Status |
+|---|---|
+| `missing_url`, `invalid_url`, `channel_not_supported` | 400 |
+| `unauthorized` | 401 |
+| `job_not_found` | 404 |
+| `too_many_attempts` | 429 |
+
 ## Configuration
 
 See [`env.example`](env.example). Notable variables: `NAVIDROME_URL`,
